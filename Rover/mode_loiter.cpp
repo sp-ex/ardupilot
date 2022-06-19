@@ -1,5 +1,8 @@
 #include "mode.h"
 #include "Rover.h"
+#include <GCS_MAVLink/GCS.h>
+
+//static uint8_t counter = 0;
 
 bool ModeLoiter::_enter()
 {
@@ -15,50 +18,116 @@ bool ModeLoiter::_enter()
 
     // initialise heading to current heading
     _desired_yaw_cd = ahrs.yaw_sensor;
+    // initialise orientation parameter for omni vehicles with current heading
+    // g2.omni_orient = (int16_t)(_desired_yaw_cd / 100);
+    // gcs().send_text(MAV_SEVERITY_INFO,  "OMNI_ORIENT set to %d", (int)(_desired_yaw_cd /100));
 
     return true;
 }
 
 void ModeLoiter::update()
 {
-    // get distance (in meters) to destination
-    _distance_to_destination = rover.current_loc.get_distance(_destination);
+    // omnidirectional loitering
+    if (g2.loit_type == 3) {
+        // get manual inputs for overrrides
+        float desired_steering, desired_throttle_longitudinal, desired_throttle_lateral;
+        get_pilot_input(desired_steering, desired_throttle_longitudinal);
+        get_pilot_desired_lateral(desired_throttle_lateral);
 
-    const float loiter_radius = rover.g2.sailboat.tack_enabled() ? g2.sailboat.get_loiter_radius() : g2.loit_radius;
-
-    // if within loiter radius slew desired speed towards zero and use existing desired heading
-    if (_distance_to_destination <= loiter_radius) {
-        // sailboats should not stop unless motoring
-        const float desired_speed_within_radius = rover.g2.sailboat.tack_enabled() ? 0.1f : 0.0f;
-        _desired_speed = attitude_control.get_desired_speed_accel_limited(desired_speed_within_radius, rover.G_Dt);
-
-        // if we have a sail but not trying to use it then point into the wind
-        if (!rover.g2.sailboat.tack_enabled() && rover.g2.sailboat.sail_enabled()) {
-            _desired_yaw_cd = degrees(g2.windvane.get_true_wind_direction_rad()) * 100.0f;
+        // if there is steering input, send steering to motors (override)
+        if (!is_zero(desired_steering)){
+            g2.motors.set_steering(desired_steering, false);
+            // reset desired yaw to current yaw
+            _desired_yaw_cd = ahrs.yaw_sensor;
         }
-    } else {
-        // P controller with hard-coded gain to convert distance to desired speed
-        _desired_speed = MIN((_distance_to_destination - loiter_radius) * g2.loiter_speed_gain, g2.wp_nav.get_default_speed());
-
-        // calculate bearing to destination
-        _desired_yaw_cd = rover.current_loc.get_bearing_to(_destination);
-        float yaw_error_cd = wrap_180_cd(_desired_yaw_cd - ahrs.yaw_sensor);
-        // if destination is behind vehicle, reverse towards it
-        if ((fabsf(yaw_error_cd) > 9000 && g2.loit_type == 0) || g2.loit_type == 2) {
-            _desired_yaw_cd = wrap_180_cd(_desired_yaw_cd + 18000);
-            yaw_error_cd = wrap_180_cd(_desired_yaw_cd - ahrs.yaw_sensor);
-            _desired_speed = -_desired_speed;
+        else { // hold current yaw (or use param omni_orient)
+            if (g2.omni_yaw_type == 1) {
+                _desired_yaw_cd = 100 * g2.omni_orient;
+            }
+            calc_steering_to_heading(_desired_yaw_cd);
         }
 
-        // reduce desired speed if yaw_error is large
-        // 45deg of error reduces speed to 75%, 90deg of error reduces speed to 50%
-        float yaw_error_ratio = 1.0f - constrain_float(fabsf(yaw_error_cd / 9000.0f), 0.0f, 1.0f) * 0.5f;
-        _desired_speed *= yaw_error_ratio;
+        // omni loiter: calculate longitudinal and lateral throttle from distance and bearing to destoination, if there were no manual inputs
+        if(is_zero(desired_throttle_longitudinal) && is_zero(desired_throttle_lateral)) {
+            // get distance (in meters) to destination
+            _distance_to_destination = rover.current_loc.get_distance(_destination);
+
+            // if within loiter radius, set desired speed to 0
+            if (_distance_to_destination <= g2.loit_radius) {
+                desired_throttle_longitudinal = 0.0f;
+                desired_throttle_lateral = 0.0f;
+            }
+            else {
+                // P controller with hard-coded gain to convert distance to desired speed
+                _desired_speed = MIN((_distance_to_destination - g2.loit_radius) * g2.loiter_speed_gain, g2.wp_nav.get_default_speed());
+
+                // calculate relative bearing to destination (-180 to +180 deg)
+                float relative_bearing_cd = wrap_180_cd(rover.current_loc.get_bearing_to(_destination) - ahrs.yaw_sensor);
+                float relative_bearing_rad = radians(relative_bearing_cd/100);
+
+                // calculate longitudinal and lateral component of desired speed
+                _desired_speed_longitudinal = cosf(relative_bearing_rad) * _desired_speed;
+                _desired_speed_lateral = sinf(relative_bearing_rad) * _desired_speed;
+
+                // calc longitudinal and lateral throttle
+                desired_throttle_longitudinal = is_zero(g2.wp_nav.get_default_speed()) ? 0.0f : 100.0f * (_desired_speed_longitudinal / g2.wp_nav.get_default_speed());
+                desired_throttle_lateral = is_zero(g2.wp_nav.get_default_speed()) ? 0.0f : 100.0f * (_desired_speed_lateral / g2.wp_nav.get_default_speed());
+            }
+        }
+        // if there were manual inputs, reset destination
+        else {
+            if(!g2.wp_nav.get_stopping_location(_destination)){
+            }
+        }
+
+        // send longitutinal and lateral throttle to motors
+        g2.motors.set_throttle(desired_throttle_longitudinal);
+        g2.motors.set_lateral(desired_throttle_lateral);
+
     }
 
-    // run steering and throttle controllers
-    calc_steering_to_heading(_desired_yaw_cd);
-    calc_throttle(_desired_speed, true);
+
+    // loitering by steering and throttle
+    else {
+        // get distance (in meters) to destination
+        _distance_to_destination = rover.current_loc.get_distance(_destination);
+
+        const float loiter_radius = rover.g2.sailboat.tack_enabled() ? g2.sailboat.get_loiter_radius() : g2.loit_radius;
+
+        // if within loiter radius slew desired speed towards zero and use existing desired heading
+        if (_distance_to_destination <= loiter_radius) {
+            // sailboats should not stop unless motoring
+            const float desired_speed_within_radius = rover.g2.sailboat.tack_enabled() ? 0.1f : 0.0f;
+            _desired_speed = attitude_control.get_desired_speed_accel_limited(desired_speed_within_radius, rover.G_Dt);
+
+            // if we have a sail but not trying to use it then point into the wind
+            if (!rover.g2.sailboat.tack_enabled() && rover.g2.sailboat.sail_enabled()) {
+                _desired_yaw_cd = degrees(g2.windvane.get_true_wind_direction_rad()) * 100.0f;
+            }
+        } else {
+            // P controller with hard-coded gain to convert distance to desired speed
+            _desired_speed = MIN((_distance_to_destination - loiter_radius) * g2.loiter_speed_gain, g2.wp_nav.get_default_speed());
+
+            // calculate bearing to destination
+            _desired_yaw_cd = rover.current_loc.get_bearing_to(_destination);
+            float yaw_error_cd = wrap_180_cd(_desired_yaw_cd - ahrs.yaw_sensor);
+            // if destination is behind vehicle, reverse towards it
+            if ((fabsf(yaw_error_cd) > 9000 && g2.loit_type == 0) || g2.loit_type == 2) {
+                _desired_yaw_cd = wrap_180_cd(_desired_yaw_cd + 18000);
+                yaw_error_cd = wrap_180_cd(_desired_yaw_cd - ahrs.yaw_sensor);
+                _desired_speed = -_desired_speed;
+            }
+
+            // reduce desired speed if yaw_error is large
+            // 45deg of error reduces speed to 75%, 90deg of error reduces speed to 50%
+            float yaw_error_ratio = 1.0f - constrain_float(fabsf(yaw_error_cd / 9000.0f), 0.0f, 1.0f) * 0.5f;
+            _desired_speed *= yaw_error_ratio;
+        }
+
+        // run steering and throttle controllers
+        calc_steering_to_heading(_desired_yaw_cd);
+        calc_throttle(_desired_speed, true);
+    }
 }
 
 // get desired location

@@ -531,7 +531,7 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     // @Param: LOIT_TYPE
     // @DisplayName: Loiter type
     // @Description: Loiter behaviour when moving to the target point
-    // @Values: 0:Forward or reverse to target point,1:Always face bow towards target point,2:Always face stern towards target point
+    // @Values: 0:Forward or reverse to target point,1:Always face bow towards target point,2:Always face stern towards target point,3:Move omnidirectionally
     // @User: Standard
     AP_GROUPINFO("LOIT_TYPE", 25, ParametersG2, loit_type, 0),
 
@@ -649,6 +649,22 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     // @Bitmask: 0:Failsafe enabled in Hold mode
     // @User: Advanced
     AP_GROUPINFO("FS_OPTIONS", 48, ParametersG2, fs_options, 0),
+
+    // @Param: OMNI_ORIENT
+    // @DisplayName: Omnidirectional vehicle orientation (yaw)
+    // @Description: Orientation to be kept while onmidirectional vehicle loiters or moves
+    // @Units: deg
+    // @Range: 0 359
+    // @Increment: 1
+    // @User: Standard
+    AP_GROUPINFO("OMNI_ORIENT", 49, ParametersG2, omni_orient, 0),
+
+    // @Param: OMNI_YAW_TYPE
+    // @DisplayName: Omnidirectional yaw type
+    // @Description: Determines how yaw is set for omnidirectional vehicles
+    // @Values: 0:Manual,1:Predefined by OMNI_ORIENT
+    // @User: Standard
+    AP_GROUPINFO("OMNI_YAW_TYPE", 50, ParametersG2, omni_yaw_type, 0),
 
     AP_GROUPEND
 };

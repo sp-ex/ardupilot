@@ -1,5 +1,10 @@
 -- Location stuff (this is a commented line)
 
+include AP_Camera/AP_Camera.h
+
+singleton AP_Camera alias camera
+singleton AP_Camera method take_picture void
+
 include AP_Common/Location.h
 
 userdata Location field lat int32_t read write -900000000 900000000

@@ -640,6 +640,8 @@ protected:
 
     Location _destination;      // target location to hold position around
     float _desired_speed;       // desired speed (ramped down from initial speed to zero)
+    float _desired_speed_longitudinal;   // longitudinal component of desired speed for omnidirectional vehicles
+    float _desired_speed_lateral;        // lateral component of desired speed for omnidirectional vehicles
 };
 
 class ModeManual : public Mode

@@ -372,6 +372,10 @@ public:
     AP_Int8 loit_type;
     AP_Float loit_radius;
 
+    // predefined orientation (yaw) for omnidirectional vehicles in degrees
+    AP_Int16 omni_orient;
+    AP_Int8 omni_yaw_type;
+
 #if HAL_SPRAYER_ENABLED
     // Sprayer
     AC_Sprayer sprayer;
